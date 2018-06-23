@@ -19,3 +19,21 @@ go_binary(
         "@com_github_google_subcommands//:go_default_library",
     ],
 )
+
+go_binary(
+    name = "runsc-race",
+    srcs = [
+        "main.go",
+    ],
+    static = "on",
+    visibility = [
+        "//visibility:public",
+    ],
+    x_defs = {"main.gitRevision": "{GIT_REVISION}"},
+    deps = [
+        "//pkg/log",
+        "//runsc/boot",
+        "//runsc/cmd",
+        "@com_github_google_subcommands//:go_default_library",
+    ],
+)
