@@ -40,6 +40,14 @@ func KcovAvailable() bool {
 	return len(coverdata.Cover.Blocks) > 0
 }
 
+// CoverBlock specifies the starting and ending positions of a coverage block.
+type CoverBlock struct {
+	FirstLine uint32
+	FirstCol  uint16
+	LastLine  uint32
+	LastCol   uint16
+}
+
 // coverageMu must be held while accessing coverdata.Cover. This prevents
 // concurrent reads/writes from multiple threads collecting coverage data.
 var coverageMu sync.RWMutex
@@ -55,6 +63,41 @@ var globalData struct {
 	// syntheticPCs are a set of PCs calculated at startup, where the PC
 	// at syntheticPCs[i][j] corresponds to file i, block j.
 	syntheticPCs [][]uint64
+}
+
+// FileFromIndex returns the name of the file in the sorted list of instrumented files.
+func FileFromIndex(i int) (string, error) {
+	total := len(globalData.files)
+	if i > total {
+		return "", fmt.Errorf("file index out of range: [%d] with length %d", i, total)
+	}
+	return globalData.files[i], nil
+}
+
+// BlockFromIndex returns the i-th block in the given file.
+func BlockFromIndex(file string, i int) (CoverBlock, error) {
+	total := len(coverdata.Cover.Blocks[file])
+	if i > total {
+		return CoverBlock{}, fmt.Errorf("block index out of range: [%d] with length %d", i, total)
+	}
+	block := coverdata.Cover.Blocks[file][i]
+	return CoverBlock{
+		FirstLine: block.Line0,
+		FirstCol:  block.Col0,
+		LastLine:  block.Line1,
+		LastCol:   block.Col1,
+	}, nil
+}
+
+// PrintAllPCs prints all PCs along with their corresponding position in the
+// source code.
+func PrintAllPCs() {
+	for fileNum, file := range globalData.files {
+		for blockNum, block := range coverdata.Cover.Blocks[file] {
+			fmt.Printf("%#x\n", calculatePC(fileNum, blockNum))
+			fmt.Printf("%s:%d,%d-%d,%d\n", file, block.Line0, block.Col0, block.Line1, block.Col1)
+		}
+	}
 }
 
 // ClearCoverageData clears existing coverage data.
@@ -104,7 +147,7 @@ var coveragePool = sync.Pool{
 // coverage tools, we reset the global coverage data every time this function is
 // run.
 func ConsumeCoverageData(w io.Writer) int {
-	once.Do(initCoverageData)
+	once.Do(InitCoverageData)
 
 	coverageMu.Lock()
 	defer coverageMu.Unlock()
@@ -142,9 +185,9 @@ func ConsumeCoverageData(w io.Writer) int {
 	return total
 }
 
-// initCoverageData initializes globalData. It should only be called once,
+// InitCoverageData initializes globalData. It should only be called once,
 // before any kcov data is written.
-func initCoverageData() {
+func InitCoverageData() {
 	// First, order all files. Then calculate synthetic PCs for every block
 	// (using the well-defined ordering for files as well).
 	for file := range coverdata.Cover.Blocks {
@@ -152,21 +195,16 @@ func initCoverageData() {
 	}
 	sort.Strings(globalData.files)
 
-	// nextSyntheticPC is the first PC that we generate for a block.
-	//
-	// This uses a standard-looking kernel range for simplicity.
-	//
-	// FIXME(b/160639712): This is only necessary because syzkaller requires
-	// addresses in the kernel range. If we can remove this constraint, then we
-	// should be able to use the actual addresses.
-	var nextSyntheticPC uint64 = 0xffffffff80000000
-	for _, file := range globalData.files {
+	for fileNum, file := range globalData.files {
 		blocks := coverdata.Cover.Blocks[file]
-		thisFile := make([]uint64, 0, len(blocks))
-		for range blocks {
-			thisFile = append(thisFile, nextSyntheticPC)
-			nextSyntheticPC++ // Advance.
+		pcs := make([]uint64, 0, len(blocks))
+		for blockNum := range blocks {
+			pcs = append(pcs, calculatePC(fileNum, blockNum))
 		}
-		globalData.syntheticPCs = append(globalData.syntheticPCs, thisFile)
+		globalData.syntheticPCs = append(globalData.syntheticPCs, pcs)
 	}
+}
+
+func calculatePC(fileNum int, blockNum int) uint64 {
+	return (uint64(fileNum) << 16) + uint64(blockNum)
 }

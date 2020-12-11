@@ -32,6 +32,7 @@ go_library(
         "start.go",
         "state.go",
         "statefile.go",
+        "symbolize.go",
         "syscalls.go",
         "wait.go",
     ],
@@ -41,6 +42,7 @@ go_library(
     deps = [
         "//pkg/log",
         "//pkg/p9",
+	"//pkg/coverage",
         "//pkg/sentry/control",
         "//pkg/sentry/kernel",
         "//pkg/sentry/kernel/auth",
